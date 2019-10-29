@@ -1,0 +1,68 @@
+#!/usr/bin/env node
+
+// USAGE: Takes GTFS shapes.txt through STDIN
+//        and outputs a NDJSON stream to STDOUT
+//        in which each line is a GeoJSON LineString Feature.
+//   NOTE: Input must be in sorted order. See bin/sort_GTFS_shapes.
+
+const { pipe, through } = require('mississippi');
+const csv = require('fast-csv');
+const { lineString } = require('@turf/helpers');
+
+let curShapeId = null;
+let coordinates = null;
+let prevShpPtSeq = null;
+
+pipe(
+  process.stdin,
+  csv.parse({ headers: true }),
+  through.obj(function shapeCollector(d, _, cb) {
+    try {
+      const { shape_id, shape_pt_lat, shape_pt_lon, shape_pt_sequence } = d;
+
+      if (shape_id !== curShapeId) {
+        if (shape_id < curShapeId) {
+          console.error(
+            'ERROR: Invariant broken. shape_id values not sorted alphanumerically.\n' +
+              '       Use the bin/sort_GTFS_shapes script to pre-process the GTFS shapes.txt file'
+          );
+          process.exit(1);
+        }
+
+        if (curShapeId !== null) {
+          if (coordinates.length > 1) {
+            const feature = lineString(coordinates, { shape_id: curShapeId });
+            this.push(`${JSON.stringify(feature)}\n`);
+          } else {
+            console.warn(
+              'WARNING: Shape',
+              curShapeId,
+              'has less than two coordinates. Skipping it.'
+            );
+          }
+        }
+
+        curShapeId = shape_id;
+        coordinates = [];
+        prevShpPtSeq = -1;
+      }
+
+      if (+shape_pt_sequence <= prevShpPtSeq) {
+        console.error(
+          'ERROR: Invariant broken. shape_pt_sequence values not monotonically increasing.' +
+            '       Use the bin/sort_GTFS_shapes script to pre-process the GTFS shapes.txt file'
+        );
+        process.exit(1);
+      }
+
+      coordinates.push([+shape_pt_lon, +shape_pt_lat]);
+      prevShpPtSeq = +shape_pt_sequence;
+
+      cb();
+    } catch (err) {
+      console.error(err);
+      process.exit(1);
+    }
+  }),
+  process.stdout
+);

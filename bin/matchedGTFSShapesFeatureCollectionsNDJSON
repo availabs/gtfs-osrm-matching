@@ -1,0 +1,93 @@
+#!/usr/bin/env node
+
+/* eslint no-use-before-define: 0 */
+
+const { join } = require('path');
+
+const turfHelpers = require('@turf/helpers');
+
+const _ = require('lodash');
+
+const { pipe, through } = require('mississippi');
+const split = require('split2');
+
+const levelup = require('levelup');
+const leveldown = require('leveldown');
+const encode = require('encoding-down');
+
+const JSON_ENC = { valueEncoding: 'json' };
+const CONFLATION_GENERATED_OSM_DIR = join(
+  __dirname,
+  '../data/leveldb/conflationFeatures'
+);
+
+const db = levelup(encode(leveldown(CONFLATION_GENERATED_OSM_DIR), JSON_ENC));
+
+pipe(
+  process.stdin,
+  split(),
+  through.obj(async function splitter(line, $, cb) {
+    // Get this node's ways info object if it exists.
+    let feature;
+
+    try {
+      feature = JSON.parse(line);
+    } catch (err) {
+      console.error('JSON parse error:');
+      console.error(line);
+      return cb;
+    }
+
+    const { shape_id, way_ids } = feature;
+    const results = await Promise.all(
+      way_ids.map(async way_id => {
+        try {
+          return db.get(way_id);
+        } catch (err) {
+          console.warn(
+            JSON.stringify({
+              level: 'warn',
+              msg: 'No conflation generated way found',
+              shape_id,
+              way_id
+            })
+          );
+
+          return null;
+        }
+      })
+    );
+
+    const features = _.filter(results, _.negate(_.isNil));
+
+    console.error(
+      JSON.stringify(
+        {
+          shape_id,
+          num_matched_ways: way_ids.length,
+          num_features: features.length
+        },
+        null,
+        4
+      )
+    );
+
+    for (let i = 0; i < features.length; ++i) {
+      this.push(`${JSON.stringify(features[i])}\n`);
+    }
+
+    // const collection = turfHelpers.featureCollection(features, {
+    // id: shape_id
+    // });
+
+    // this.push(`${JSON.stringify(collection)}\n`);
+
+    return cb();
+  }),
+  process.stdout,
+  async err => {
+    if (err) {
+      console.error(err);
+    }
+  }
+);

@@ -1,0 +1,80 @@
+#!/usr/bin/env node
+
+/* eslint no-await-in-loop: 0, no-loop-func: 0, no-continue: 0 */
+
+const { pipe, through } = require('mississippi');
+const split = require('split2');
+
+const _ = require('lodash');
+
+const request = require('request-promise-native');
+
+const HOST = 'http://127.0.0.1:7182';
+
+const runOSRMMatch = async feature => {
+  // Iterate over segment lengths
+  const {
+    geometry: { coordinates }
+  } = feature;
+
+  const chunkedCoords = _.chunk(coordinates, 11);
+
+  const matchedWays = [];
+  for (let i = 0; i < chunkedCoords.length; ++i) {
+    const coords = chunkedCoords[i];
+    try {
+      const matchOpts = {
+        method: 'POST',
+        uri: `${HOST}/match`,
+        body: { coordinates: coords },
+        headers: {
+          'User-Agent': 'Request-Promise'
+        },
+        json: true // Automatically parses the JSON string in the response
+      };
+
+      const matched = await request(matchOpts);
+
+      if (matched.err) {
+        console.error(JSON.stringify(matched));
+      } else {
+        matchedWays.push(matched.ways);
+      }
+    } catch (err) {
+      console.error(err);
+      return null;
+    }
+  }
+
+  const ways = _(matchedWays)
+    .flatten()
+    .filter(_.negate(_.isNil))
+    .uniq()
+    .value();
+
+  return ways;
+};
+
+pipe(
+  process.stdin,
+  split(JSON.parse),
+  through.obj(
+    async function matcher(feature, $, cb) {
+      const {
+        properties: { shape_id }
+      } = feature;
+
+      const way_ids = await runOSRMMatch(feature);
+
+      this.push(`${JSON.stringify({ shape_id, way_ids })}\n`);
+
+      cb();
+    }
+  ),
+  process.stdout,
+  err => {
+    if (err) {
+      console.error(err);
+    }
+  }
+);

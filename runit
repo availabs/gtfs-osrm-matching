@@ -1,0 +1,7 @@
+#!/bin/bash
+
+# ./bin/runOSRMMatching < cdta.shapes.ndjson > cdta.shapes2ways.ndjson 2> matching.log
+
+# ./bin/matchedGTFSShapesFeatureCollectionsNDJSON < cdta.shapes2ways.ndjson > cdta.matched-ways.ndjson
+
+# ./bin/ndjson_to_geojson < cdta.matched-ways.ndjson > cdta.matched-ways.geojson
