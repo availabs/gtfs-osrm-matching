@@ -1,0 +1,198 @@
+#!/usr/bin/env node
+
+const { join } = require('path');
+
+const { pipe, through } = require('mississippi');
+const split = require('split2');
+const _ = require('lodash');
+
+const Database = require('better-sqlite3');
+
+const yargs = require('yargs');
+
+const cliArgsSpec = {
+  agency: {
+    demand: true,
+    type: 'string',
+    description: 'GTFS Agency'
+  }
+};
+
+const { argv } = yargs
+  .strict()
+  .parserConfiguration({
+    'camel-case-expansion': false,
+    'flatten-duplicate-arrays': false
+  })
+  .wrap(yargs.terminalWidth() / 1.618)
+  .option(cliArgsSpec);
+
+const { agency } = argv;
+
+const dbFile = join(__dirname, `../data/sqlite/${agency}`);
+const db = new Database(dbFile);
+
+const ways2shapes = {};
+
+pipe(
+  process.stdin,
+  split(JSON.parse),
+  through.obj(
+    function collect_ways2shapes({ shape_id, way_ids }, $, cb) {
+      if (!(shape_id && Array.isArray(way_ids))) {
+        return cb();
+      }
+
+      const ways = _.uniq(way_ids);
+
+      for (let i = 0; i < ways.length; ++i) {
+        const way = ways[i];
+
+        ways2shapes[way] = ways2shapes[way] || new Set();
+        ways2shapes[way].add(shape_id);
+      }
+
+      return cb();
+    },
+    function output_ways2trips(cb) {
+      const ways = Object.keys(ways2shapes);
+
+      for (let i = 0; i < ways.length; ++i) {
+        const way_id = ways[i];
+        const shape_ids = [...ways2shapes[way_id]];
+
+        // https://github.com/JoshuaWise/better-sqlite3/issues/81#issuecomment-346138586
+        const params = '?,'.repeat(shape_ids.length).slice(0, -1);
+
+        const rows = db
+          .prepare(
+            `
+            WITH cte_trip_departure_times AS (
+              SELECT
+                  min(departure_time) AS trip_departure_time,
+                  (
+                    CAST(calendar.monday AS INT)
+                    +
+                    CAST(calendar.tuesday AS INT)
+                    +
+                    CAST(calendar.wednesday AS INT)
+                    +
+                    CAST(calendar.thursday AS INT)
+                    +
+                    CAST(calendar.friday AS INT)
+                  ) / 5.0 AS weekday_coverage,
+                  (
+                    CAST(calendar.saturday AS INT)
+                    +
+                    CAST(calendar.sunday AS INT)
+                  ) / 2.0 AS weekend_coverage,
+                  (
+                    CAST(calendar.monday AS INT)
+                    +
+                    CAST(calendar.tuesday AS INT)
+                    +
+                    CAST(calendar.wednesday AS INT)
+                    +
+                    CAST(calendar.thursday AS INT)
+                    +
+                    CAST(calendar.friday AS INT)
+                    +
+                    CAST(calendar.saturday AS INT)
+                    +
+                    CAST(calendar.sunday AS INT)
+                  ) / 7.0 AS full_week_coverage
+                FROM trips
+                  INNER JOIN stop_times USING (trip_id)
+                  INNER JOIN calendar USING (service_id)
+                WHERE (trips.shape_id IN (${params}))
+                GROUP BY trip_id
+            )
+            SELECT
+                'AMP' AS time_period,
+                COALESCE(
+                  ROUND(
+                    SUM(weekday_coverage),
+                    2
+                  ), 0
+                ) AS num_trips
+              FROM cte_trip_departure_times
+              WHERE (
+                ( trip_departure_time >= '06:00:00' )
+                AND
+                ( trip_departure_time < '10:00:00' )
+              )
+            UNION
+            SELECT
+                'MIDD' AS time_period,
+                COALESCE(
+                  ROUND(
+                    SUM(weekday_coverage),
+                    2
+                  ), 0
+                ) AS num_trips
+              FROM cte_trip_departure_times
+              WHERE (
+                ( trip_departure_time >= '10:00:00' )
+                AND
+                ( trip_departure_time < '16:00:00' )
+              )
+            UNION
+            SELECT
+                'PMP' AS time_period,
+                COALESCE(
+                  ROUND(
+                    SUM(weekday_coverage),
+                    2
+                  ), 0
+                ) AS num_trips
+              FROM cte_trip_departure_times
+              WHERE (
+                ( trip_departure_time >= '16:00:00' )
+                AND
+                ( trip_departure_time < '20:00:00' )
+              )
+            UNION
+            SELECT
+                'WE' AS time_period,
+                COALESCE(
+                  ROUND(
+                    SUM(weekend_coverage),
+                    2
+                  ), 0
+                ) AS num_trips
+              FROM cte_trip_departure_times
+              WHERE (
+                ( trip_departure_time >= '06:00:00' )
+                AND
+                ( trip_departure_time < '20:00:00' )
+              )
+            UNION
+            SELECT
+                'OVN' AS time_period,
+                COALESCE(
+                  ROUND(
+                    SUM(full_week_coverage),
+                    2
+                  ), 0
+                ) AS num_trips
+              FROM cte_trip_departure_times
+              WHERE (
+                ( trip_departure_time < '06:00:00' )
+                OR
+                ( trip_departure_time >= '20:00:00' )
+              )`
+          )
+          .all(shape_ids);
+
+        this.push(`${JSON.stringify({ way_id, rows })}\n`);
+      }
+      cb();
+    }
+  ),
+  process.stdout,
+  err => {
+    if (err) {
+      console.error(err);
+    }
+  }
+);

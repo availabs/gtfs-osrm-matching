@@ -1,0 +1,78 @@
+#!/bin/bash
+
+# Extracts the features from each matched geojson file as one ndjson stream,
+#   then sorts that stream by shape id, shape segment index, and SharedStreets reference ID.
+
+set -e
+
+pushd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null
+
+if [ "$#" -ne 1 ]; then
+  (>&2 echo "ERROR: You must specify the GTFS agency as the 1st and only CLI argument.")
+  exit 1
+fi
+
+# To lowecase
+AGENCY="${1,,}"
+
+AGENCY_GTFS_DIR="../data/gtfs/$AGENCY"
+
+SQLITE_DIR='../data/sqlite'
+mkdir -p "$SQLITE_DIR"
+
+AGENCY_SQLITE_FILE="$SQLITE_DIR/$AGENCY"
+
+echo "$AGENCY_SQLITE_FILE"
+
+cleanup() {
+  echo 'ERR'
+  rm -f "$AGENCY_SQLITE_FILE"
+  exit 1
+}
+trap 'cleanup' ERR
+
+rm -f "$AGENCY_SQLITE_FILE"
+
+GTFS_FILES=(
+  agency.txt
+  stops.txt
+  routes.txt
+  trips.txt
+  stop_times.txt
+  calendar.txt
+  calendar_dates.txt
+  fare_attributes.txt
+  fare_rules.txt
+  shapes.txt
+  frequencies.txt
+  transfers.txt
+  pathways.txt
+  levels.txt
+  feed_info.txt
+)
+
+for gtfs_file in ${GTFS_FILES[*]}; do
+
+  inf="$AGENCY_GTFS_DIR/$gtfs_file"
+  table_name="${gtfs_file/\.txt/}"
+
+  SQL=".mode csv
+.import '$inf' $table_name"
+
+  if [[ -f "$inf" ]]; then
+    sqlite3 --batch "$AGENCY_SQLITE_FILE" <<< "$SQL"
+
+  fi
+done
+
+sqlite3 --batch "$AGENCY_SQLITE_FILE" <<< "
+CREATE INDEX trips_trip_id_idx ON trips (trip_id);
+CREATE INDEX trips_times_service_id_idx ON trips (service_id);
+
+CREATE INDEX stop_times_trip_id_idx ON stop_times (trip_id);
+
+CREATE INDEX calendar_service_id_idx ON calendar (service_id);
+"
+
+
+popd >/dev/null

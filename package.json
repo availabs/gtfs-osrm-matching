@@ -17,6 +17,7 @@
   "dependencies": {
     "@turf/helpers": "^6.1.4",
     "@turf/turf": "^5.1.6",
+    "better-sqlite3": "^5.4.3",
     "encoding-down": "^6.3.0",
     "fast-csv": "^3.4.0",
     "leveldown": "^5.4.1",
