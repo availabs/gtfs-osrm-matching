@@ -34,6 +34,8 @@ const db = new Database(dbFile);
 
 const ways2shapes = {};
 
+// SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='calendar');
+
 pipe(
   process.stdin,
   split(JSON.parse),
@@ -64,7 +66,7 @@ pipe(
         // https://github.com/JoshuaWise/better-sqlite3/issues/81#issuecomment-346138586
         const params = '?,'.repeat(shape_ids.length).slice(0, -1);
 
-        const rows = db
+        const trips_counts = db
           .prepare(
             `
             WITH cte_trip_departure_times AS (
@@ -184,7 +186,7 @@ pipe(
           )
           .all(shape_ids);
 
-        this.push(`${JSON.stringify({ way_id, rows })}\n`);
+        this.push(`${JSON.stringify({ way_id, trips_counts })}\n`);
       }
       cb();
     }

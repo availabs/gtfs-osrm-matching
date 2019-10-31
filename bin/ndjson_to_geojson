@@ -22,7 +22,9 @@ process.stdin
         cb();
       },
       function flush(cb) {
-        this.push(']}');
+        if (!firstLine) {
+          this.push(']}');
+        }
         cb();
       }
     )

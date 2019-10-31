@@ -1,0 +1,54 @@
+#!/usr/bin/env node
+
+// Takes a NDJSON file of GeoJSON feaures via STDIN
+//   And outputs to STDOUT a valid GeoJSON object
+
+const { pipe, through } = require('mississippi');
+const split = require('split2');
+
+const aggregate_way_trip_counts = {};
+
+const newAggTripCts = () => ({
+  AMP: 0,
+  MIDD: 0,
+  PMP: 0,
+  WE: 0,
+  OVN: 0
+});
+
+pipe(
+  process.stdin,
+  split(JSON.parse),
+  through.obj(
+    function aggregate({ way_id, trips_counts }, _, cb) {
+      aggregate_way_trip_counts[way_id] =
+        aggregate_way_trip_counts[way_id] || newAggTripCts();
+
+      if (Array.isArray(trips_counts)) {
+        for (let i = 0; i < trips_counts.length; ++i) {
+          const { time_period, num_trips } = trips_counts[i];
+          aggregate_way_trip_counts[way_id][time_period] += num_trips;
+        }
+      }
+
+      cb();
+    },
+    function flush(cb) {
+      const way_ids = Object.keys(aggregate_way_trip_counts);
+
+      this.push('way_id,amp,midd,pmp,we,ovn\n');
+
+      for (let i = 0; i < way_ids.length; ++i) {
+        const way_id = way_ids[i];
+        const { AMP, MIDD, PMP, WE, OVN } = aggregate_way_trip_counts[way_id];
+
+        const row = `${way_id},${AMP},${MIDD},${PMP},${WE},${OVN}\n`;
+
+        this.push(row);
+      }
+
+      cb();
+    }
+  ),
+  process.stdout
+);
