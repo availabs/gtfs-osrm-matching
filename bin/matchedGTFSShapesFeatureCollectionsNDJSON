@@ -4,8 +4,6 @@
 
 const { join } = require('path');
 
-const turfHelpers = require('@turf/helpers');
-
 const _ = require('lodash');
 
 const { pipe, through } = require('mississippi');
@@ -60,27 +58,9 @@ pipe(
 
     const features = _.filter(results, _.negate(_.isNil));
 
-    console.error(
-      JSON.stringify(
-        {
-          shape_id,
-          num_matched_ways: way_ids.length,
-          num_features: features.length
-        },
-        null,
-        4
-      )
-    );
-
     for (let i = 0; i < features.length; ++i) {
       this.push(`${JSON.stringify(features[i])}\n`);
     }
-
-    // const collection = turfHelpers.featureCollection(features, {
-    // id: shape_id
-    // });
-
-    // this.push(`${JSON.stringify(collection)}\n`);
 
     return cb();
   }),

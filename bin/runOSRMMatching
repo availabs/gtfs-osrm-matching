@@ -6,42 +6,120 @@ const { pipe, through } = require('mississippi');
 const split = require('split2');
 
 const _ = require('lodash');
+const turf = require('@turf/turf');
+const turfHelpers = require('@turf/helpers');
 
 const request = require('request-promise-native');
 
 const HOST = 'http://127.0.0.1:7182';
 
-const runOSRMMatch = async feature => {
+const requestMatches = reqParams =>
+  request({
+    method: 'POST',
+    uri: `${HOST}/match`,
+    body: reqParams,
+    headers: {
+      'User-Agent': 'Request-Promise'
+    },
+    json: true // Automatically parses the JSON string in the response
+  });
+
+const runOSRMMatch = async (feature, chunkSize = 100) => {
   // Iterate over segment lengths
+  if (chunkSize < 2) {
+    return null;
+  }
   const {
+    properties: { shape_id, chunk_id = null },
     geometry: { coordinates }
   } = feature;
 
-  const chunkedCoords = _.chunk(coordinates, 11);
+  const chunkedCoords =
+    coordinates.length === 3 && chunkSize === 2
+      ? [coordinates.slice(0, 2), coordinates.slice(1)]
+      : _.chunk(coordinates, chunkSize);
+
+  if (_.last(chunkedCoords).length === 1) {
+    const [lastCoord] = chunkedCoords.pop();
+    _.last(chunkedCoords).push(lastCoord);
+  }
+
+  const numChunks = chunkedCoords.length;
 
   const matchedWays = [];
+  const matchConfidences = [];
+
   for (let i = 0; i < chunkedCoords.length; ++i) {
-    const coords = chunkedCoords[i];
+    const chunkCoords = chunkedCoords[i];
+
+    const localChunkId = _.padStart(i, numChunks.toString().length, '0');
+
+    const cur_chunk_id = chunk_id
+      ? `${chunk_id}.${localChunkId}`
+      : localChunkId;
+
     try {
-      const matchOpts = {
-        method: 'POST',
-        uri: `${HOST}/match`,
-        body: { coordinates: coords },
-        headers: {
-          'User-Agent': 'Request-Promise'
-        },
-        json: true // Automatically parses the JSON string in the response
+      const reqParams = {
+        coordinates: chunkCoords,
+        snapping: 'any'
       };
 
-      const matched = await request(matchOpts);
-
-      if (matched.err) {
-        console.error(JSON.stringify(matched));
-      } else {
-        matchedWays.push(matched.ways);
+      if (chunkCoords.length === 2) {
+        reqParams.bearings = _.fill(
+          Array(2),
+          turf.bearing(turf.point(chunkCoords[0]), turf.point(chunkCoords[1]))
+        );
       }
+      const matchResponse = await requestMatches(reqParams);
+
+      if (matchResponse.err) {
+        console.error(
+          JSON.stringify({ shape_id, chunk_id: cur_chunk_id, matchResponse })
+        );
+        continue;
+      }
+      const { ways } = matchResponse;
+      const { confidence } = matchResponse;
+
+      const logOutput = {
+        shape_id,
+        chunk_id: cur_chunk_id,
+        ways,
+        confidence
+      };
+
+      if (confidence >= 0.9) {
+        matchedWays.push(ways);
+      } else {
+        // TODO: Recurse
+        const chunkFeature = turfHelpers.lineString(chunkCoords, {
+          ...feature.properties,
+          chunk_id: cur_chunk_id
+        });
+
+        const { ways: rWays, confidence: rConfidence = -Infinity } =
+          runOSRMMatch(chunkFeature, chunkSize / 2) || {};
+
+        if (confidence >= rConfidence && confidence >= 0.7) {
+          matchedWays.push(ways);
+          matchConfidences.push(confidence);
+        } else if (rConfidence > 0.7) {
+          matchedWays.push(rWays);
+          matchConfidences.push(rConfidence);
+        }
+
+        logOutput.rConfidence = rConfidence;
+
+        if (confidence < 0.9) {
+          logOutput.msg = 'LOW_CONFIDENCE_MATCH';
+        }
+      }
+
+      console.error(JSON.stringify(logOutput));
     } catch (err) {
-      console.error(err);
+      console.error(
+        JSON.stringify({ shape_id, chunk_id: cur_chunk_id, err }, null, 4)
+      );
       return null;
     }
   }
@@ -52,29 +130,28 @@ const runOSRMMatch = async feature => {
     .uniq()
     .value();
 
-  return ways;
+  const confidence = _.mean(matchConfidences);
+  return { ways, confidence };
 };
 
 pipe(
   process.stdin,
   split(JSON.parse),
-  through.obj(
-    async function matcher(feature, $, cb) {
-      const {
-        properties: { shape_id }
-      } = feature;
+  through.obj(async function matcher(feature, $, cb) {
+    const {
+      properties: { shape_id }
+    } = feature;
 
-      const way_ids = await runOSRMMatch(feature);
+    const { ways, confidence } = await runOSRMMatch(feature);
 
-      this.push(`${JSON.stringify({ shape_id, way_ids })}\n`);
+    this.push(`${JSON.stringify({ shape_id, way_ids: ways, confidence })}\n`);
 
-      cb();
-    }
-  ),
+    cb();
+  }),
   process.stdout,
   err => {
     if (err) {
-      console.error(err);
+      console.error(JSON.stringify({ err }, null, 4));
     }
   }
 );

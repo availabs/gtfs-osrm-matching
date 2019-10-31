@@ -1,1 +1,7 @@
 node_modules/
+*_gtfs_osm_conflation/
+data/
+qgis/
+spike/
+
+package-lock.json

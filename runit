@@ -1,7 +1,21 @@
 #!/bin/bash
 
-# ./bin/runOSRMMatching < cdta.shapes.ndjson > cdta.shapes2ways.ndjson 2> matching.log
+AGENCY=cdta
+OUT_DIR="${AGENCY}_gtfs_osm_conflation"
 
-# ./bin/matchedGTFSShapesFeatureCollectionsNDJSON < cdta.shapes2ways.ndjson > cdta.matched-ways.ndjson
+rm -rf "$OUT_DIR"
+mkdir -p "$OUT_DIR"
 
-# ./bin/ndjson_to_geojson < cdta.matched-ways.ndjson > cdta.matched-ways.geojson
+cp "./data/gtfs/$AGENCY/shapes.txt" "$OUT_DIR"
+
+./bin/sort_GTFS_shapes < "$OUT_DIR/shapes.txt" > "$OUT_DIR/shapes.sorted.txt"
+
+./bin/gtfs_shapes_to_ndjson < "$OUT_DIR/shapes.sorted.txt" > "$OUT_DIR/shapes.ndjson"
+
+./bin/runOSRMMatching < "$OUT_DIR/shapes.ndjson" > "${OUT_DIR}/shapes2ways.ndjson" 2> "${OUT_DIR}/matching.log"
+
+./bin/matchedGTFSShapesFeatureCollectionsNDJSON < "${OUT_DIR}/shapes2ways.ndjson" > "${OUT_DIR}/matched-ways.ndjson"
+
+# To help with QA
+./bin/ndjson_to_geojson < "$OUT_DIR/shapes.ndjson" > "${OUT_DIR}/shapes.geojson"
+./bin/ndjson_to_geojson < "${OUT_DIR}/matched-ways.ndjson" > "${OUT_DIR}/matched-ways.geojson"
