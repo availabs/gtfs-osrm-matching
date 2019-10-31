@@ -1,7 +1,16 @@
 #!/bin/bash
 
-AGENCY=cdta
-OUT_DIR="${AGENCY}_gtfs_osm_conflation"
+if [ "$#" -ne 1 ]; then
+  (>&2 echo "ERROR: You must specify the GTFS agency as the 1st and only CLI argument.")
+  exit 1
+fi
+
+# To lowecase
+AGENCY="${1,,}"
+
+OUT_DIR="gtfs_osm_conflation/${AGENCY}"
+
+pushd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null
 
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
@@ -19,3 +28,7 @@ cp "./data/gtfs/$AGENCY/shapes.txt" "$OUT_DIR"
 # To help with QA
 ./bin/ndjson_to_geojson < "$OUT_DIR/shapes.ndjson" > "${OUT_DIR}/shapes.geojson"
 ./bin/ndjson_to_geojson < "${OUT_DIR}/matched-ways.ndjson" > "${OUT_DIR}/matched-ways.geojson"
+
+./bin/shapes2ways_to_ways2trips --agency "$AGENCY" < "${OUT_DIR}/shapes2ways.ndjson" > "${OUT_DIR}/way_trip_counts.ndjson"
+
+popd >/dev/null
