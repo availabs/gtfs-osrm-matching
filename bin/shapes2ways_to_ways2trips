@@ -34,8 +34,6 @@ const db = new Database(dbFile);
 
 const ways2shapes = {};
 
-// SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type='table' AND name='calendar');
-
 pipe(
   process.stdin,
   split(JSON.parse),
@@ -66,127 +64,22 @@ pipe(
         // https://github.com/JoshuaWise/better-sqlite3/issues/81#issuecomment-346138586
         const params = '?,'.repeat(shape_ids.length).slice(0, -1);
 
-        const trips_counts = db
+        const [avg_daily_trips] = db
           .prepare(
             `
-            WITH cte_trip_departure_times AS (
-              SELECT
-                  min(departure_time) AS trip_departure_time,
-                  (
-                    CAST(calendar.monday AS INT)
-                    +
-                    CAST(calendar.tuesday AS INT)
-                    +
-                    CAST(calendar.wednesday AS INT)
-                    +
-                    CAST(calendar.thursday AS INT)
-                    +
-                    CAST(calendar.friday AS INT)
-                  ) / 5.0 AS weekday_coverage,
-                  (
-                    CAST(calendar.saturday AS INT)
-                    +
-                    CAST(calendar.sunday AS INT)
-                  ) / 2.0 AS weekend_coverage,
-                  (
-                    CAST(calendar.monday AS INT)
-                    +
-                    CAST(calendar.tuesday AS INT)
-                    +
-                    CAST(calendar.wednesday AS INT)
-                    +
-                    CAST(calendar.thursday AS INT)
-                    +
-                    CAST(calendar.friday AS INT)
-                    +
-                    CAST(calendar.saturday AS INT)
-                    +
-                    CAST(calendar.sunday AS INT)
-                  ) / 7.0 AS full_week_coverage
-                FROM trips
-                  INNER JOIN stop_times USING (trip_id)
-                  INNER JOIN calendar USING (service_id)
-                WHERE (trips.shape_id IN (${params}))
-                GROUP BY trip_id
-            )
             SELECT
-                'AMP' AS time_period,
-                COALESCE(
-                  ROUND(
-                    SUM(weekday_coverage),
-                    2
-                  ), 0
-                ) AS num_trips
-              FROM cte_trip_departure_times
-              WHERE (
-                ( trip_departure_time >= '06:00:00' )
-                AND
-                ( trip_departure_time < '10:00:00' )
-              )
-            UNION
-            SELECT
-                'MIDD' AS time_period,
-                COALESCE(
-                  ROUND(
-                    SUM(weekday_coverage),
-                    2
-                  ), 0
-                ) AS num_trips
-              FROM cte_trip_departure_times
-              WHERE (
-                ( trip_departure_time >= '10:00:00' )
-                AND
-                ( trip_departure_time < '16:00:00' )
-              )
-            UNION
-            SELECT
-                'PMP' AS time_period,
-                COALESCE(
-                  ROUND(
-                    SUM(weekday_coverage),
-                    2
-                  ), 0
-                ) AS num_trips
-              FROM cte_trip_departure_times
-              WHERE (
-                ( trip_departure_time >= '16:00:00' )
-                AND
-                ( trip_departure_time < '20:00:00' )
-              )
-            UNION
-            SELECT
-                'WE' AS time_period,
-                COALESCE(
-                  ROUND(
-                    SUM(weekend_coverage),
-                    2
-                  ), 0
-                ) AS num_trips
-              FROM cte_trip_departure_times
-              WHERE (
-                ( trip_departure_time >= '06:00:00' )
-                AND
-                ( trip_departure_time < '20:00:00' )
-              )
-            UNION
-            SELECT
-                'OVN' AS time_period,
-                COALESCE(
-                  ROUND(
-                    SUM(full_week_coverage),
-                    2
-                  ), 0
-                ) AS num_trips
-              FROM cte_trip_departure_times
-              WHERE (
-                ( trip_departure_time < '06:00:00' )
-                OR
-                ( trip_departure_time >= '20:00:00' )
-              )`
+                SUM(amp_num_trips) AS amp,
+                SUM(midd_num_trips) AS midd,
+                SUM(pmp_num_trips) AS pmp,
+                SUM(we_num_trips) AS we,
+                SUM(ovn_num_trips) AS ovn
+              FROM avg_daily_trips_across_shape_by_time_period
+              WHERE (shape_id IN (${params}))
+          `
           )
           .all(shape_ids);
 
-        this.push(`${JSON.stringify({ way_id, trips_counts })}\n`);
+        this.push(`${JSON.stringify({ way_id, avg_daily_trips })}\n`);
       }
       cb();
     }

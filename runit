@@ -1,34 +1,16 @@
 #!/bin/bash
 
-if [ "$#" -ne 1 ]; then
-  (>&2 echo "ERROR: You must specify the GTFS agency as the 1st and only CLI argument.")
-  exit 1
-fi
-
-# To lowecase
-AGENCY="${1,,}"
-
-OUT_DIR="gtfs_osm_conflation/${AGENCY}"
-
 pushd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null
 
-rm -rf "$OUT_DIR"
-mkdir -p "$OUT_DIR"
+find ./data/gtfs/ \
+    -mindepth 1 \
+    -type d \
+    -printf '%f\n' |
+  sort |
+  while read -r agency; do
+    ./do_conflation_for_agency "$agency"
+  done
 
-cp "./data/gtfs/$AGENCY/shapes.txt" "$OUT_DIR"
-
-./bin/sort_GTFS_shapes < "$OUT_DIR/shapes.txt" > "$OUT_DIR/shapes.sorted.txt"
-
-./bin/gtfs_shapes_to_ndjson < "$OUT_DIR/shapes.sorted.txt" > "$OUT_DIR/shapes.ndjson"
-
-./bin/runOSRMMatching < "$OUT_DIR/shapes.ndjson" > "${OUT_DIR}/shapes2ways.ndjson" 2> "${OUT_DIR}/matching.log"
-
-./bin/matchedGTFSShapesFeatureCollectionsNDJSON < "${OUT_DIR}/shapes2ways.ndjson" > "${OUT_DIR}/matched-ways.ndjson"
-
-# To help with QA
-./bin/ndjson_to_geojson < "$OUT_DIR/shapes.ndjson" > "${OUT_DIR}/shapes.geojson"
-./bin/ndjson_to_geojson < "${OUT_DIR}/matched-ways.ndjson" > "${OUT_DIR}/matched-ways.geojson"
-
-./bin/shapes2ways_to_ways2trips --agency "$AGENCY" < "${OUT_DIR}/shapes2ways.ndjson" > "${OUT_DIR}/way_trip_counts.ndjson"
+./bin/combine_way_trip_counts > ./gtfs_osm_conflation/combined_way_trip_counts.csv
 
 popd >/dev/null

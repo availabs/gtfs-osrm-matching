@@ -5,30 +5,33 @@
 
 const { pipe, through } = require('mississippi');
 const split = require('split2');
+const _ = require('lodash');
 
 const aggregate_way_trip_counts = {};
 
 const newAggTripCts = () => ({
-  AMP: 0,
-  MIDD: 0,
-  PMP: 0,
-  WE: 0,
-  OVN: 0
+  amp: 0,
+  midd: 0,
+  pmp: 0,
+  we: 0,
+  ovn: 0
 });
 
 pipe(
   process.stdin,
   split(JSON.parse),
   through.obj(
-    function aggregate({ way_id, trips_counts }, _, cb) {
+    function aggregate({ way_id, avg_daily_trips }, $, cb) {
+      // console.error(JSON.stringify({ way_id, avg_daily_trips }));
       aggregate_way_trip_counts[way_id] =
         aggregate_way_trip_counts[way_id] || newAggTripCts();
 
-      if (Array.isArray(trips_counts)) {
-        for (let i = 0; i < trips_counts.length; ++i) {
-          const { time_period, num_trips } = trips_counts[i];
-          aggregate_way_trip_counts[way_id][time_period] += num_trips;
-        }
+      const time_periods = Object.keys(avg_daily_trips);
+
+      for (let i = 0; i < time_periods.length; ++i) {
+        const time_period = time_periods[i];
+        aggregate_way_trip_counts[way_id][time_period] +=
+          avg_daily_trips[time_period] || 0;
       }
 
       cb();
@@ -40,9 +43,15 @@ pipe(
 
       for (let i = 0; i < way_ids.length; ++i) {
         const way_id = way_ids[i];
-        const { AMP, MIDD, PMP, WE, OVN } = aggregate_way_trip_counts[way_id];
+        const { amp, midd, pmp, we, ovn } = aggregate_way_trip_counts[way_id];
 
-        const row = `${way_id},${AMP},${MIDD},${PMP},${WE},${OVN}\n`;
+        const a = _.round(amp, 2);
+        const m = _.round(midd, 2);
+        const p = _.round(pmp, 2);
+        const w = _.round(we, 2);
+        const o = _.round(ovn, 2);
+
+        const row = `${way_id},${a},${m},${p},${w},${o}\n`;
 
         this.push(row);
       }

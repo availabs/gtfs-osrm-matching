@@ -51,6 +51,8 @@ GTFS_FILES=(
   feed_info.txt
 )
 
+unzip -qq -o "$AGENCY_GTFS_DIR/gtfs.zip" -d "$AGENCY_GTFS_DIR"
+
 for gtfs_file in ${GTFS_FILES[*]}; do
 
   inf="$AGENCY_GTFS_DIR/$gtfs_file"
@@ -66,13 +68,36 @@ for gtfs_file in ${GTFS_FILES[*]}; do
 done
 
 sqlite3 --batch "$AGENCY_SQLITE_FILE" <<< "
-CREATE INDEX trips_trip_id_idx ON trips (trip_id);
-CREATE INDEX trips_times_service_id_idx ON trips (service_id);
+  CREATE INDEX trips_trip_id_idx ON trips (trip_id);
+  CREATE INDEX trips_times_service_id_idx ON trips (service_id);
 
-CREATE INDEX stop_times_trip_id_idx ON stop_times (trip_id);
-
-CREATE INDEX calendar_service_id_idx ON calendar (service_id);
+  CREATE INDEX stop_times_trip_id_idx ON stop_times (trip_id);
 "
 
+if [[ -f "$AGENCY_GTFS_DIR/calendar.txt" ]]; then
+  SUM_DOW_FLAGS_RESULT="$(
+    sqlite3 "$AGENCY_SQLITE_FILE" <<< "
+      SELECT
+          SUM(
+            CAST(monday AS INT) +
+            CAST(tuesday AS INT) +
+            CAST(wednesday AS INT) +
+            CAST(thursday AS INT) +
+            CAST(friday AS INT)
+          )
+        FROM calendar;
+    "
+  )"
+
+  if [[ "$SUM_DOW_FLAGS_RESULT" -ne 0 ]]; then
+    CREATE_CACHE_JOIN_SQL_FILE=./create_cached_gtfs_join_table.calendar.sql
+  fi
+fi
+
+if [[ -z "$CREATE_CACHE_JOIN_SQL_FILE" ]]; then
+  CREATE_CACHE_JOIN_SQL_FILE=./create_cached_gtfs_join_table.no_calendar.sql
+fi
+
+sqlite3 "$AGENCY_SQLITE_FILE" < "$CREATE_CACHE_JOIN_SQL_FILE"
 
 popd >/dev/null
